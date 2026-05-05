@@ -1,10 +1,16 @@
 const profileService = require('../services/profileService');
 const { parseNaturalLanguageQuery } = require('../utils/nlpParser');
-const { format } = require('fast-csv');
+const { setCache } = require('../middleware/cache');
+const { format }   = require('fast-csv');
+const pool         = require('../config/db');
 
 async function listProfiles(req, res) {
   try {
-    const result = await profileService.getProfiles(req.query);
+    const result = await profileService.getProfiles(req.normalizedQ || req.query);
+
+    // Populate cache for next request
+    if (req.cacheKey) await setCache(req.cacheKey, { status: 'success', ...result });
+
     return res.json({ status: 'success', ...result });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ status: 'error', message: err.message });
@@ -37,6 +43,9 @@ async function searchProfiles(req, res) {
     }
 
     const result = await profileService.searchProfiles(parsed, { page, limit });
+
+    if (req.cacheKey) await setCache(req.cacheKey, { status: 'success', ...result });
+
     return res.json({ status: 'success', ...result });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ status: 'error', message: err.message });
@@ -45,18 +54,12 @@ async function searchProfiles(req, res) {
   }
 }
 
-//Add the export function at the bottom:
 async function exportProfiles(req, res) {
   try {
-    // Reuse same filter logic but get ALL matching rows (no pagination)
-    const pool = require('../config/db');
-    const profileService = require('../services/profileService');
-
-    // Build query with filters but no limit
-    const filters = { ...req.query, limit: 10000, page: 1 };
-    const result  = await profileService.getProfiles(filters);
-
+    const filters  = { ...req.query, limit: 10000, page: 1 };
+    const result   = await profileService.getProfiles(filters);
     const filename = `profiles_${Date.now()}.csv`;
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
@@ -73,7 +76,6 @@ async function exportProfiles(req, res) {
       columns.forEach(col => { entry[col] = row[col]; });
       csvStream.write(entry);
     }
-
     csvStream.end();
   } catch (err) {
     console.error(err);
@@ -87,19 +89,11 @@ async function createProfile(req, res) {
     if (!name || !name.trim()) {
       return res.status(400).json({ status: 'error', message: 'Name is required' });
     }
-
-    const pool = require('../config/db');
-
-    // Check for duplicate
     const existing = await pool.query('SELECT id FROM profiles WHERE name = $1', [name.trim()]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ status: 'error', message: 'Profile with this name already exists' });
     }
-
-    // For now, insert with placeholder values
-    // (Stage 1 logic — calling external APIs — can be wired in later)
     return res.status(501).json({ status: 'error', message: 'External API enrichment not yet implemented' });
-
   } catch (err) {
     console.error(err);
     return res.status(500).json({ status: 'error', message: 'Internal server error' });
@@ -108,7 +102,6 @@ async function createProfile(req, res) {
 
 async function deleteProfile(req, res) {
   try {
-    const pool = require('../config/db');
     const result = await pool.query('DELETE FROM profiles WHERE id = $1 RETURNING id', [req.params.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Profile not found' });
@@ -120,4 +113,7 @@ async function deleteProfile(req, res) {
   }
 }
 
-module.exports = { listProfiles, getProfile, searchProfiles, exportProfiles, createProfile, deleteProfile };
+module.exports = {
+  listProfiles, getProfile, searchProfiles,
+  exportProfiles, createProfile, deleteProfile
+};

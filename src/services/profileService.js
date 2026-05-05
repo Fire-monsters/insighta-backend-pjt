@@ -1,23 +1,31 @@
 const pool = require('../config/db');
 
 const VALID_SORT_FIELDS = ['age', 'created_at', 'gender_probability'];
-const VALID_ORDERS = ['asc', 'desc'];
-const VALID_GENDERS = ['male', 'female'];
-const VALID_AGE_GROUPS = ['child', 'teenager', 'adult', 'senior'];
+const VALID_ORDERS      = ['asc', 'desc'];
+const VALID_GENDERS     = ['male', 'female'];
+const VALID_AGE_GROUPS  = ['child', 'teenager', 'adult', 'senior'];
 
+/**
+ * Builds WHERE clause from filter object.
+ * Accepts both raw query params and pre-normalized filter objects.
+ */
 function buildProfileQuery(filters) {
   const conditions = [];
-  const values = [];
-  let idx = 1;
+  const values     = [];
+  let   idx        = 1;
 
   if (filters.gender) {
-    if (!VALID_GENDERS.includes(filters.gender)) throw { status: 422, message: 'Invalid gender value' };
+    if (!VALID_GENDERS.includes(filters.gender)) {
+      throw { status: 422, message: 'Invalid gender value' };
+    }
     conditions.push(`gender = $${idx++}`);
     values.push(filters.gender);
   }
 
   if (filters.age_group) {
-    if (!VALID_AGE_GROUPS.includes(filters.age_group)) throw { status: 422, message: 'Invalid age_group value' };
+    if (!VALID_AGE_GROUPS.includes(filters.age_group)) {
+      throw { status: 422, message: 'Invalid age_group value' };
+    }
     conditions.push(`age_group = $${idx++}`);
     values.push(filters.age_group);
   }
@@ -60,26 +68,24 @@ function buildProfileQuery(filters) {
 }
 
 async function getProfiles(filters) {
-  const page  = Math.max(1, parseInt(filters.page)  || 1);
-  const limit = Math.min(50, Math.max(1, parseInt(filters.limit) || 10));
-  const offset = (page - 1) * limit;
-
-  const sortBy = VALID_SORT_FIELDS.includes(filters.sort_by) ? filters.sort_by : 'created_at';
-  const order  = VALID_ORDERS.includes(filters.order) ? filters.order : 'asc';
+  const page    = Math.max(1, parseInt(filters.page)  || 1);
+  const limit   = Math.min(50, Math.max(1, parseInt(filters.limit) || 10));
+  const offset  = (page - 1) * limit;
+  const sortBy  = VALID_SORT_FIELDS.includes(filters.sort_by) ? filters.sort_by : 'created_at';
+  const order   = VALID_ORDERS.includes(filters.order)        ? filters.order   : 'asc';
 
   const { where, values, idx } = buildProfileQuery(filters);
 
-  const countResult = await pool.query(
-    `SELECT COUNT(*) FROM profiles ${where}`,
-    values
-  );
+  // Run count and data queries in parallel — saves one round trip
+  const [countResult, dataResult] = await Promise.all([
+    pool.query(`SELECT COUNT(*) FROM profiles ${where}`, values),
+    pool.query(
+      `SELECT * FROM profiles ${where} ORDER BY ${sortBy} ${order} LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limit, offset]
+    )
+  ]);
+
   const total = parseInt(countResult.rows[0].count);
-
-  const dataResult = await pool.query(
-    `SELECT * FROM profiles ${where} ORDER BY ${sortBy} ${order} LIMIT $${idx} OFFSET $${idx + 1}`,
-    [...values, limit, offset]
-  );
-
   return { page, limit, total, data: dataResult.rows };
 }
 

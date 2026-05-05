@@ -47,3 +47,28 @@
 ### Live URLs
 - Backend: https://your-backend.up.railway.app
 - Web Portal: https://insighta-web.vercel.app
+
+
+---
+
+## Stage 4B — System Optimization & Data Ingestion
+
+### Query Performance
+- Composite DB indexes on common filter combinations
+- Redis query cache (5-min TTL) — cache hits return in under 10ms
+- Parallel count + data queries via Promise.all()
+- Connection pooling via pg.Pool
+
+### Query Normalization
+- All filters normalized before cache key generation
+- String values lowercased, country_id uppercased, numerics cast
+- Keys sorted alphabetically — query param order never affects cache key
+- Two queries with the same intent always hit the same cache entry
+
+### CSV Ingestion
+- Endpoint: POST /api/profiles/ingest (admin only)
+- Streams file via multer → csv-parser, never loads full file into memory
+- Bulk inserts in chunks of 500 rows
+- Bad rows skipped, never fail the upload
+- Concurrent uploads supported via shared pg.Pool
+- Returns summary: total_rows, inserted, skipped, reasons
